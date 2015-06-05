@@ -1,0 +1,14 @@
+{
+  "policies": [
+    {
+      "buildname":"PPM :: PPM Feature Branches :: .Feature Checkin Gate and publish",
+      "days_of_items_to_retain":5,
+      "last_number_of_releases_to_retain":3
+    },
+    {
+      "buildname":"NuGet :: Daptiv.Bcl",
+      "days_of_items_to_retain":5,
+      "last_number_of_releases_to_retain":3
+    }
+  ]
+}
