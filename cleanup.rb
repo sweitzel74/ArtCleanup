@@ -1,4 +1,4 @@
-#!/usr/bin/ruby
+#!/usr/bin/env ruby
 # encoding: UTF-8
  
 # This script cleans out items that do not meet the company retention
@@ -12,8 +12,6 @@ options = {}
 
 # Default values
 options[:dryrun] = true
-options[:days_of_items_to_retain] = 5
-options[:last_number_of_releases_to_retain] = 3
 options[:server_uri] = 'http://localhost:8081/artifactory'
 
 parser = OptionParser.new do|opts|
@@ -84,50 +82,17 @@ end
 def delete_items(server_info, uri_buildname, items_to_delete, dryrun)
   items_to_delete.each do |item_to_delete|
     if dryrun
-      puts "Dryrun, would delete: #{server_info[:api_uri]}/" \
-        "#{uri_buildname}?buildNumbers=#{item_to_delete['uri']}&artifacts=0"
+      puts "Dryrun, would delete: #{server_info[:api_uri]}/build/" \
+        "#{uri_buildname}?buildNumbers=#{item_to_delete['uri'][1..-1]}&artifacts=1"
     else
-      delete_item_artifacts(server_info, item_to_delete)
       delete_item(server_info, uri_buildname, item_to_delete)
     end
   end
 end
- 
-def delete_item_artifacts(server_info, item)
-  item_artifacts = get_item_artifacts(server_info, item)
-  item_artifacts['results'].each do |artifact|
-    artifact_uri = "#{server_info[:uri]}/#{artifact['repo']}/" \
-                   "#{artifact['path']}/#{artifact['name']}"
-    RestClient::Request.execute(method: :delete,
-                                url: artifact_uri,
-                                user: server_info[:user],
-                                password: server_info[:password])
-  end
-end
- 
-def get_item_artifacts(server_info, item)
-  payload = get_payload(item)
-  headers = { content_type: 'text/plain', accept: 'application/json' }
-  JSON.parse(
-    RestClient::Request.execute(method: :post,
-                                url: "#{server_info[:api_uri]}/search/aql",
-                                user: server_info[:user],
-                                password: server_info[:password],
-                                payload: payload,
-                                headers: headers,
-                                timeout: 1200))
-end
- 
-def get_payload(item)
-  buildnum = item['uri'][1..-1] # strip beginning '/' from string
-  payload = 'items.find(' \
-            "{\"$and\":[{\"@build.number\":{\"$eq\":\"#{buildnum}\"}}]})"
-  payload
-end
- 
+
 def delete_item(server_info, uri_buildname, item)
-  build_uri = "#{server_info[:api_uri]}/" \
-    "#{uri_buildname}?buildNumbers=#{item['uri']}&artifacts=0"
+  build_uri = "#{server_info[:api_uri]}/build/" \
+    "#{uri_buildname}?buildNumbers=#{item['uri'][1..-1]}&artifacts=1"
   RestClient::Request.execute(method: :delete,
                               url: build_uri,
                               user: server_info[:user],
@@ -138,9 +103,16 @@ end
 options_collection = []
 if options[:policyfile]
   fail 'Policy file specified does not exist!' unless File.exist?(options[:policyfile])
+  if options[:days_of_items_to_retain] || options[:last_number_of_releases_to_retain]
+    msg = 'You specified both a policyfile AND retention values!  If specifying a '
+    msg << 'policyfile then the retention values should be supplied by the policyfile.'
+    fail msg
+  end
   # get policies from policy file
   policy_hash = JSON.parse(File.read('policies.json'))
   policy_hash['policies'].each do |policy|
+    policy['days_of_items_to_retain'] = 5 unless policy['days_of_items_to_retain']
+    policy['last_number_of_releases_to_retain'] = 3 unless policy['last_number_of_releases_to_retain']
     options_collection << { user: options[:user],
                             password: options[:password],
                             buildname: policy['buildname'],
@@ -150,6 +122,8 @@ if options[:policyfile]
                             dryrun: options[:dryrun] }
   end
 else
+  options[:days_of_items_to_retain] = 5 unless options[:days_of_items_to_retain]
+  options[:last_number_of_releases_to_retain] = 3 unless options[:last_number_of_releases_to_retain]
   # create policy from cmd line args
   options_collection << { user: options[:user],
                           password: options[:password],
@@ -167,7 +141,7 @@ options_collection.each do |options|
                   api_uri: "#{options[:server_uri]}/api",
                   user: options[:user],
                   password: options[:password] }
-  uri_buildname = URI.escape(options[:buildname])
+  uri_buildname = URI.escape(options[:buildname].to_s)
    
    
   # Get full set of items to operate over
@@ -175,7 +149,7 @@ options_collection.each do |options|
    
   if items.empty?
     puts "No items in #{server_info[:api_uri]}/build/#{uri_buildname}"
-    fail 'Aborting cleanup!'
+    puts 'Aborting cleanup!'
   else
     # Subset of items older than the cutoff date
     items_older_than_cutoff_date = items.select do |item|
@@ -220,7 +194,6 @@ options_collection.each do |options|
    
     if items_to_delete.empty?
       puts 'Found no items to delete, exiting!'
-      exit
     else
       delete_items(server_info, uri_buildname, items_to_delete, options[:dryrun])
     end
